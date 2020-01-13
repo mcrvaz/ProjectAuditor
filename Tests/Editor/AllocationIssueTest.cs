@@ -16,9 +16,15 @@ namespace UnityEditor.ProjectAuditor.EditorTests
             m_ScriptResourceValueTypeAllocation = new ScriptResource("ValueTypeAllocation.cs", @"
 struct ValueType
 {
+    private float val;
+    ValueType(float _val)
+    {
+        val = _val;
+    }
+
     public static ValueType Make()
     {
-        return new ValueType();
+        return new ValueType(5.0f);
     }
 }
 ");
@@ -92,7 +98,7 @@ class ArrayAllocation
             // check issue
             Assert.True(allocIssue.name.Equals("ObjectAllocation.Make"));
             Assert.True(allocIssue.filename.Equals(m_ScriptResourceObjectAllocation.scriptName));
-            Assert.True(allocIssue.description.Equals(".ctor object allocation"));
+            Assert.True(allocIssue.description.Equals("'ObjectAllocation' object allocation"));
             Assert.True(allocIssue.callingMethod.Equals("ObjectAllocation ObjectAllocation::Make()"));
             Assert.AreEqual(6, allocIssue.line);
             Assert.AreEqual(IssueCategory.ApiCalls, allocIssue.category);
@@ -121,7 +127,7 @@ class ArrayAllocation
             // check issue
             Assert.True(allocIssue.name.Equals("ArrayAllocation.Dummy"));
             Assert.True(allocIssue.filename.Equals(m_ScriptResourceArrayAllocation.scriptName));
-            Assert.True(allocIssue.description.Equals("MyParam array allocation"));
+            Assert.True(allocIssue.description.Equals("'MyParam' array allocation"));
             Assert.True(allocIssue.callingMethod.Equals("System.Void ArrayAllocation::Dummy()"));
             Assert.AreEqual(15, allocIssue.line);
             Assert.AreEqual(IssueCategory.ApiCalls, allocIssue.category);

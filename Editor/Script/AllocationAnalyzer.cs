@@ -39,9 +39,13 @@ namespace Unity.ProjectAuditor.Editor
         {
             if (inst.OpCode == OpCodes.Newobj)
             {
-                var ctorMethod = (MethodReference)inst.Operand;
+                var methodReference = (MethodReference)inst.Operand;
+                var typeReference = methodReference.DeclaringType;
+                if (typeReference.IsValueType)
+                    return null;
+
                 var descriptor = objectAllocationDescriptor;
-                var description = string.Format("{0} object allocation", ctorMethod.Name);
+                var description = string.Format("'{0}' object allocation", typeReference.Name);
                 
                 var calleeNode = new CallTreeNode(descriptor.description);
             
@@ -55,9 +59,9 @@ namespace Unity.ProjectAuditor.Editor
             }
             else // OpCodes.Newarr
             {
-                var type = (TypeReference)inst.Operand;
+                var typeReference = (TypeReference)inst.Operand;
                 var descriptor = arrayAllocationDescriptor;
-                var description = string.Format("{0} array allocation", type.Name);
+                var description = string.Format("'{0}' array allocation", typeReference.Name);
                 
                 var calleeNode = new CallTreeNode(descriptor.description);
         
