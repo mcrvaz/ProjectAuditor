@@ -36,6 +36,8 @@ namespace Unity.ProjectAuditor.Editor
         
         [SerializeField] private string m_SearchText;
         [SerializeField] private bool m_DeveloperMode = false;
+
+        public string[] m_CategoryNames;
         
         private static readonly string[] m_AreaNames = {
             "CPU",
@@ -105,8 +107,15 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
         
         private void OnEnable()
         {
-            m_ProjectAuditor = new ProjectAuditor();    
+            m_ProjectAuditor = new ProjectAuditor();
 
+            var categoryNames = new List<string>();
+            for(IssueCategory i = 0; i < IssueCategory.NumCategories; ++i)
+            {                
+                categoryNames.Add(i.ToString());
+            }
+            m_CategoryNames = categoryNames.ToArray();
+            
             var assemblyNames = m_ProjectAuditor.GetAuditor<ScriptAuditor>().assemblyNames.ToList();
             assemblyNames.Sort();
             m_AssemblyNames = assemblyNames.ToArray();
@@ -252,8 +261,16 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
                         minWidth = 100;
                         break;
                     case IssueTable.Column.Area :
-                        width = 60;
-                        minWidth = 50;
+                        if (issueCategory == IssueCategory.Allocations)
+                        {
+                            width = 0;
+                            minWidth = 0;
+                        }
+                        else
+                        {
+                            width = 60;
+                            minWidth = 50;
+                        }
                         break;
                     case IssueTable.Column.Filename :
                         if (issueCategory == IssueCategory.ProjectSettings)
@@ -295,7 +312,7 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
             return new IssueTable(state,
                 new MultiColumnHeader(new MultiColumnHeaderState(columnsList.ToArray())),
                 issues.ToArray(),
-                issueCategory == IssueCategory.ApiCalls,
+                issueCategory != IssueCategory.ProjectSettings,
                 m_ProjectAuditor,
                 this);
         }
@@ -307,9 +324,9 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
 
             if (m_IssueTables.Count == 0)
             {
-                for(int i = 0; i < (int)IssueCategory.NumCategories; ++i)
+                for(IssueCategory i = 0; i < IssueCategory.NumCategories; ++i)
                 {
-                    IssueTable issueTable = CreateIssueTable((IssueCategory)i, new TreeViewState());
+                    IssueTable issueTable = CreateIssueTable(i, new TreeViewState());
                     m_IssueTables.Add(issueTable);
                 }               
             }
@@ -708,7 +725,7 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
             {
                 EditorGUILayout.BeginHorizontal();
                 
-                var mode = (IssueCategory)GUILayout.Toolbar((int)m_ActiveMode, m_ProjectAuditor.auditorNames, GUILayout.MaxWidth(LayoutSize.ModeTabWidth)/*, GUILayout.ExpandWidth(true)*/);
+                var mode = (IssueCategory)GUILayout.Toolbar((int)m_ActiveMode, m_CategoryNames, GUILayout.MaxWidth(LayoutSize.ModeTabWidth)/*, GUILayout.ExpandWidth(true)*/);
 
                 EditorGUILayout.EndHorizontal();
 

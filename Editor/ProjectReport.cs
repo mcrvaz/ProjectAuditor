@@ -40,9 +40,9 @@ namespace Unity.ProjectAuditor.Editor
             StreamWriter writer = new StreamWriter(path);
             writer.WriteLine("Issue,Area,Path,Line");
 
-            for (int i = 0; i < (int) IssueCategory.NumCategories; i++)
+            for (IssueCategory i = 0; i < IssueCategory.NumCategories; i++)
             {
-                var issues = GetIssues((IssueCategory) i);
+                var issues = GetIssues(i);
 
                 foreach (var issue in issues)
                 {

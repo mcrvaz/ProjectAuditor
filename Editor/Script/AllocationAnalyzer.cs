@@ -53,7 +53,7 @@ namespace Unity.ProjectAuditor.Editor
                 (
                     descriptor,
                     description,
-                    IssueCategory.ApiCalls,
+                    IssueCategory.Allocations,
                     calleeNode
                 );                
             }
@@ -69,7 +69,7 @@ namespace Unity.ProjectAuditor.Editor
                 (
                     descriptor,
                     description,
-                    IssueCategory.ApiCalls,
+                    IssueCategory.Allocations,
                     calleeNode
                 );                
             }

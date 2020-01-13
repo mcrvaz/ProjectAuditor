@@ -15,6 +15,7 @@ namespace Unity.ProjectAuditor.Editor
 
     public enum IssueCategory
     {
+        Allocations,
         ApiCalls,
         ProjectSettings,
         NumCategories
