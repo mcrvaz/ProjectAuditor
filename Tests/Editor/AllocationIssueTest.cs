@@ -64,7 +64,7 @@ class ArrayAllocation
         public void ValueTypeAllocationIsNotReported()
         {
             var issues =
-                ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceValueTypeAllocation.relativePath);
+                ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceValueTypeAllocation);
 
             Assert.Zero(issues.Count());
         }
@@ -72,7 +72,7 @@ class ArrayAllocation
         [Test]
         public void ObjectAllocationIsReported()
         {
-            var issues = ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceObjectAllocation.relativePath);
+            var issues = ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceObjectAllocation);
 			
             Assert.AreEqual(1, issues.Count());
 			
@@ -101,7 +101,7 @@ class ArrayAllocation
         [Test]
         public void ArrayAllocationIsReported()
         {
-            var issues = ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceArrayAllocation.relativePath);
+            var issues = ScriptIssueTestHelper.AnalyzeAndFindScriptIssues(m_ScriptResourceArrayAllocation);
 			
             Assert.AreEqual(1, issues.Count());
 			
