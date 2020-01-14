@@ -199,7 +199,7 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
         
         public bool ShouldDisplay(ProjectIssue issue)
         {
-            if (m_ActiveMode == IssueCategory.ApiCalls &&
+            if (m_ActiveMode != IssueCategory.ProjectSettings &&
                 !m_AssemblySelection.Contains(issue.assembly) &&
                 !m_AssemblySelection.ContainsGroup("All"))
             {
@@ -393,7 +393,7 @@ In addition, it is possible to filter issues by area (CPU/Memory/etc...) or asse
 
             DrawDetailsFoldout(problemDescriptor);
             DrawRecommendationFoldout(problemDescriptor);
-            if (m_ActiveMode == IssueCategory.ApiCalls)
+            if (m_ActiveMode != IssueCategory.ProjectSettings)
             {
                 CallTreeNode callTree = null;
                 if (selectedIssues.Count() == 1)
