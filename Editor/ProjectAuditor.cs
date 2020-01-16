@@ -29,7 +29,6 @@ namespace Unity.ProjectAuditor.Editor
         }
         
         private string[] m_AuditorNames;
-
         private static string m_DataPath;
 
         private static string dataPath
