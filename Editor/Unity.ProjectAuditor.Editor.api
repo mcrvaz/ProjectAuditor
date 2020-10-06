@@ -152,6 +152,16 @@ namespace Unity.ProjectAuditor.Editor.Auditors
         public virtual void RegisterDescriptor(Unity.ProjectAuditor.Editor.ProblemDescriptor descriptor);
         public virtual void Reload(string path);
     }
+
+    public class ShadersAuditor : Unity.ProjectAuditor.Editor.IAuditor
+    {
+        public ShadersAuditor() {}
+        public virtual void Audit(System.Action<Unity.ProjectAuditor.Editor.ProjectIssue> onIssueFound, System.Action onComplete, Unity.ProjectAuditor.Editor.IProgressBar progressBar = default(Unity.ProjectAuditor.Editor.IProgressBar));
+        [System.Runtime.CompilerServices.IteratorStateMachine(typeof(Unity.ProjectAuditor.Editor.Auditors.ShadersAuditor.<GetDescriptors>d__1))] public virtual System.Collections.Generic.IEnumerable<Unity.ProjectAuditor.Editor.ProblemDescriptor> GetDescriptors();
+        public virtual void Initialize(Unity.ProjectAuditor.Editor.ProjectAuditorConfig config);
+        public virtual void RegisterDescriptor(Unity.ProjectAuditor.Editor.ProblemDescriptor descriptor);
+        public virtual void Reload(string path);
+    }
 }
 
 namespace Unity.ProjectAuditor.Editor.CodeAnalysis
