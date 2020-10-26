@@ -10,16 +10,15 @@ namespace Unity.ProjectAuditor.Editor.Utils
 {
     internal static class AssemblyHelper
     {
-        public const string DefaultAssemblyFileName = "Assembly-CSharp.dll";
-
         const string BuiltInPackagesFolder = "BuiltInPackages";
 
+        public const string DefaultAssemblyFileName = "Assembly-CSharp.dll";
         public static string DefaultAssemblyName
         {
             get { return Path.GetFileNameWithoutExtension(DefaultAssemblyFileName); }
         }
 
-        public static IEnumerable<Type> GetAllTypes()
+        private static IEnumerable<Type> GetAllTypes()
         {
             return AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes());
         }
@@ -79,27 +78,30 @@ namespace Unity.ProjectAuditor.Editor.Utils
                      .Distinct()) yield return dir;
         }
 
-        public static bool IsPackageInfoAvailable()
-        {
-#if UNITY_2019_3_OR_NEWER
-            return true;
-#else
-            return false;
-#endif
-        }
-
         public static bool IsModuleAssembly(string assemblyName)
         {
             return GetPrecompiledEngineAssemblyPaths().FirstOrDefault(a => a.Contains(assemblyName)) != null;
         }
 
+        public static bool IsAssemblyReadOnly(string assemblyName)
+        {
+            var info = GetAssemblyInfoFromAssemblyName(assemblyName);
+            return info.readOnly;
+        }
+
         public static AssemblyInfo GetAssemblyInfoFromAssemblyPath(string assemblyPath)
+        {
+            var info = GetAssemblyInfoFromAssemblyName(Path.GetFileNameWithoutExtension(assemblyPath));
+            info.path = assemblyPath;
+            return info;
+        }
+
+        private static AssemblyInfo GetAssemblyInfoFromAssemblyName(string assemblyName)
         {
             // by default let's assume it's not a package
             var assemblyInfo = new AssemblyInfo
             {
-                name = Path.GetFileNameWithoutExtension(assemblyPath),
-                path = assemblyPath,
+                name = assemblyName,
                 relativePath = "Assets",
                 readOnly = false
             };
@@ -127,9 +129,9 @@ namespace Unity.ProjectAuditor.Editor.Utils
                     // non-package user-defined assembly
                 }
             }
-            else
+            else if (!assemblyInfo.name.Equals(DefaultAssemblyName))
             {
-                // default assembly
+                Debug.LogErrorFormat("AsmDef cannot be found for " + assemblyInfo.name);
             }
 
             return assemblyInfo;

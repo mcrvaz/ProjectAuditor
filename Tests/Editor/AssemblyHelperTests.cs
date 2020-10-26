@@ -48,12 +48,12 @@ namespace UnityEditor.ProjectAuditor.EditorTests
         }
 
         [Test]
-        public void UnityEngineAssemblyPathIsFound()
+        public void UnityEngineModuleAssemblyPathIsFound()
         {
             var paths = AssemblyHelper.GetPrecompiledEngineAssemblyPaths();
 
             Assert.Positive(paths.Count());
-            Assert.NotNull(paths.FirstOrDefault(path => path.Contains("UnityEngine.CoreModule.dll")));
+            Assert.NotNull(paths.FirstOrDefault(path => path.Equals(Path.Combine(EditorApplication.applicationContentsPath, "Managed/UnityEngine/UnityEngine.CoreModule.dll"))));
         }
 
 #if UNITY_2018_1_OR_NEWER
@@ -88,6 +88,15 @@ namespace UnityEditor.ProjectAuditor.EditorTests
             Assert.IsTrue(assemblyInfo.path.Equals("Library/ScriptAssemblies/Unity.ProjectAuditor.Editor.dll"));
             Assert.IsTrue(assemblyInfo.asmDefPath.Equals("Packages/com.unity.project-auditor/Editor/Unity.ProjectAuditor.Editor.asmdef"));
             Assert.IsTrue(assemblyInfo.relativePath.Equals("Packages/com.unity.project-auditor"));
+        }
+
+#endif
+
+#if UNITY_2019_1_OR_NEWER
+        [Test]
+        public void RegistryPackageAssemblyIsReadOnly()
+        {
+            Assert.IsTrue(AssemblyHelper.IsAssemblyReadOnly("UnityEngine.TestRunner"));
         }
 
 #endif

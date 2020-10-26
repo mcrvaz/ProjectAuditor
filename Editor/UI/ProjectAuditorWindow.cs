@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Unity.ProjectAuditor.Editor.CodeAnalysis;
 using Unity.ProjectAuditor.Editor.Utils;
@@ -25,8 +24,6 @@ namespace Unity.ProjectAuditor.Editor.UI
             Valid
         }
 
-        private static readonly string[] m_AreaNames = Enum.GetNames(typeof(Area));
-
         enum ExportMode
         {
             All = 0,
@@ -34,7 +31,10 @@ namespace Unity.ProjectAuditor.Editor.UI
             Selected
         }
 
-        private static readonly string NoIssueSelectedText = "No issue selected";
+        private const string NoIssueSelectedText = "No issue selected";
+        private const string AnalysisIsRequiredText = "Missing Data: Please Analyze";
+
+        private static readonly string[] AreaNames = Enum.GetNames(typeof(Area));
 
         private readonly AnalysisViewDescriptor[] m_AnalysisViewDescriptors =
         {
@@ -46,9 +46,17 @@ namespace Unity.ProjectAuditor.Editor.UI
                 descriptionWithIcon = true,
                 showAssemblySelection = false,
                 showCritical = false,
-                showInvertedCallTree = false,
-                showFilenameColumn = false,
-                showAssemblyColumn = false
+                showDependencyView = true,
+                showRightPanels = true,
+                dependencyViewGuiContent = new GUIContent("Asset Dependencies", "Asset Dependencies"),
+                columnDescriptors = new[]
+                {
+                    IssueTable.Column.Description,
+                    IssueTable.Column.FileType,
+                    IssueTable.Column.Path
+                },
+                onDoubleClick = FocusOnAssetInProjectWindow,
+                analyticsEvent = ProjectAuditorAnalytics.UIButton.Assets
             },
             new AnalysisViewDescriptor
             {
@@ -58,9 +66,19 @@ namespace Unity.ProjectAuditor.Editor.UI
                 descriptionWithIcon = false,
                 showAssemblySelection = true,
                 showCritical = true,
-                showInvertedCallTree = true,
-                showFilenameColumn = true,
-                showAssemblyColumn = true
+                showDependencyView = true,
+                showRightPanels = true,
+                dependencyViewGuiContent = new GUIContent("Inverted Call Hierarchy", "Inverted Call Hierarchy"),
+                columnDescriptors = new[]
+                {
+                    IssueTable.Column.Description,
+                    IssueTable.Column.Priority,
+                    IssueTable.Column.Area,
+                    IssueTable.Column.Filename,
+                    IssueTable.Column.Assembly
+                },
+                onDoubleClick = OpenTextFile,
+                analyticsEvent = ProjectAuditorAnalytics.UIButton.ApiCalls
             },
             new AnalysisViewDescriptor
             {
@@ -70,9 +88,15 @@ namespace Unity.ProjectAuditor.Editor.UI
                 descriptionWithIcon = false,
                 showAssemblySelection = false,
                 showCritical = false,
-                showInvertedCallTree = false,
-                showFilenameColumn = false,
-                showAssemblyColumn = false
+                showDependencyView = false,
+                showRightPanels = true,
+                columnDescriptors = new[]
+                {
+                    IssueTable.Column.Description,
+                    IssueTable.Column.Area,
+                },
+                onDoubleClick = OpenProjectSettings,
+                analyticsEvent = ProjectAuditorAnalytics.UIButton.ProjectSettings
             }
         };
 
@@ -85,9 +109,8 @@ namespace Unity.ProjectAuditor.Editor.UI
         private readonly List<AnalysisView> m_AnalysisViews = new List<AnalysisView>();
         private TreeViewSelection m_AreaSelection;
         private TreeViewSelection m_AssemblySelection;
-        private CallHierarchyView m_CallHierarchyView;
-        private CallTreeNode m_CurrentCallTree;
-        private SearchField m_SearchField;
+        private bool m_SearchCallTree = false;
+        private bool m_SearchMatchCase = false;
 
         // Serialized fields
         [SerializeField] private int m_ActiveModeIndex;
@@ -97,12 +120,8 @@ namespace Unity.ProjectAuditor.Editor.UI
         [SerializeField] private bool m_DeveloperMode;
         [SerializeField] private ProjectReport m_ProjectReport;
         [SerializeField] private string m_SearchText;
-        [SerializeField] private bool m_ShowFilters = true;
-        [SerializeField] private bool m_ShowActions = true;
-        [SerializeField] private bool m_ShowCallTree = true;
-        [SerializeField] private bool m_ShowDetails = true;
-        [SerializeField] private bool m_ShowRecommendation = true;
         [SerializeField] AnalysisState m_AnalysisState = AnalysisState.NotStarted;
+        [SerializeField] private Preferences m_Preferences = new Preferences();
 
         private AnalysisView m_ActiveAnalysisView
         {
@@ -111,7 +130,7 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         private IssueTable m_ActiveIssueTable
         {
-            get { return m_ActiveAnalysisView.m_Table; }
+            get { return m_ActiveAnalysisView.table; }
         }
 
         public void AddItemsToMenu(GenericMenu menu)
@@ -122,6 +141,12 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         public bool Match(ProjectIssue issue)
         {
+            // return false if the issue does not match one of these criteria:
+            // - assembly name, if applicable
+            // - area
+            // - is not muted, if enabled
+            // - critical context, if enabled/applicable
+
             UnityEngine.Profiling.Profiler.BeginSample("MatchAssembly");
             var matchAssembly = !m_ActiveAnalysisView.desc.showAssemblySelection ||
                 m_AssemblySelection != null &&
@@ -138,7 +163,7 @@ namespace Unity.ProjectAuditor.Editor.UI
             if (!matchArea)
                 return false;
 
-            if (!m_ProjectAuditor.config.DisplayMutedIssues)
+            if (!m_Preferences.mutedIssues)
             {
                 UnityEngine.Profiling.Profiler.BeginSample("IsMuted");
                 var muted = m_ProjectAuditor.config.GetAction(issue.descriptor, issue.callingMethod) ==
@@ -149,16 +174,29 @@ namespace Unity.ProjectAuditor.Editor.UI
             }
 
             if (m_ActiveAnalysisView.desc.showCritical &&
-                m_ProjectAuditor.config.DisplayOnlyCriticalIssues &&
+                m_Preferences.onlyCriticalIssues &&
                 !issue.isPerfCriticalContext)
                 return false;
 
-            if (!string.IsNullOrEmpty(m_SearchText))
-                if (!MatchesSearch(issue.description) &&
-                    !MatchesSearch(issue.filename) &&
-                    !MatchesSearch(issue.name))
-                    return false;
-            return true;
+            if (string.IsNullOrEmpty(m_SearchText))
+                return true;
+
+            // return true if the issue matches the any of the following string search criteria
+            if (MatchesSearch(issue.description))
+                return true;
+
+            if (MatchesSearch(issue.filename))
+                return true;
+
+            var dependencies = issue.dependencies;
+            if (dependencies != null)
+            {
+                if (MatchesSearch(dependencies, m_SearchCallTree))
+                    return true;
+            }
+
+            // no string match
+            return false;
         }
 
         private void OnEnable()
@@ -176,7 +214,7 @@ namespace Unity.ProjectAuditor.Editor.UI
                 {
                     if (m_AreaSelectionSummary == "All")
                     {
-                        m_AreaSelection.SetAll(m_AreaNames);
+                        m_AreaSelection.SetAll(AreaNames);
                     }
                     else if (m_AreaSelectionSummary != "None")
                     {
@@ -186,7 +224,7 @@ namespace Unity.ProjectAuditor.Editor.UI
                 }
                 else
                 {
-                    m_AreaSelection.SetAll(m_AreaNames);
+                    m_AreaSelection.SetAll(AreaNames);
                 }
             }
 
@@ -196,15 +234,13 @@ namespace Unity.ProjectAuditor.Editor.UI
             foreach (var desc in m_AnalysisViewDescriptors)
             {
                 var view = new AnalysisView(desc, m_ProjectAuditor.config, this);
-                view.CreateTable();
+                view.CreateTable(m_Preferences);
 
                 if (m_AnalysisState == AnalysisState.Valid)
                     view.AddIssues(m_ProjectReport.GetIssues(view.desc.category));
 
                 m_AnalysisViews.Add(view);
             }
-
-            m_CallHierarchyView = new CallHierarchyView(new TreeViewState());
 
             RefreshDisplay();
         }
@@ -243,10 +279,31 @@ namespace Unity.ProjectAuditor.Editor.UI
             return m_AnalysisState != AnalysisState.NotStarted;
         }
 
-        private bool MatchesSearch(string field)
+        private bool MatchesSearch(string text)
         {
-            return !string.IsNullOrEmpty(field) &&
-                field.IndexOf(m_SearchText, StringComparison.CurrentCultureIgnoreCase) >= 0;
+            return !string.IsNullOrEmpty(text) &&
+                text.IndexOf(m_SearchText, m_SearchMatchCase ? StringComparison.CurrentCulture : StringComparison.CurrentCultureIgnoreCase) >= 0;
+        }
+
+        private bool MatchesSearch(DependencyNode node, bool recursive)
+        {
+            if (node == null)
+                return false;
+
+            var callTreeNode = node as CallTreeNode;
+            if (callTreeNode != null)
+            {
+                if (MatchesSearch(callTreeNode.typeName) || MatchesSearch(callTreeNode.methodName))
+                    return true;
+            }
+            if (recursive)
+                for (int i = 0; i < callTreeNode.GetNumChildren(); i++)
+                {
+                    if (MatchesSearch(callTreeNode.GetChild(i), true))
+                        return true;
+                }
+
+            return false;
         }
 
         private void Analyze()
@@ -258,7 +315,7 @@ namespace Unity.ProjectAuditor.Editor.UI
             m_ProjectReport = new ProjectReport();
             foreach (var view in m_AnalysisViews)
             {
-                view.m_Table.Reset();
+                view.table.Reset();
             }
 
             var newIssues = new List<ProjectIssue>();
@@ -385,23 +442,6 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         private void DrawIssues()
         {
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.BeginVertical();
-
-            m_ActiveAnalysisView.OnGUI();
-
-            EditorGUILayout.EndVertical();
-
-            EditorGUILayout.BeginVertical(GUILayout.Width(LayoutSize.FoldoutWidth));
-
-            DrawFoldouts();
-
-            EditorGUILayout.EndVertical();
-            EditorGUILayout.EndHorizontal();
-        }
-
-        private void DrawFoldouts()
-        {
             ProblemDescriptor problemDescriptor = null;
             var selectedItems = m_ActiveIssueTable.GetSelectedItems();
             var selectedDescriptors = selectedItems.Select(i => i.ProblemDescriptor);
@@ -411,28 +451,52 @@ namespace Unity.ProjectAuditor.Editor.UI
             if (selectedDescriptors.Count() == selectedDescriptors.Count(d => d.id == firstDescriptor.id))
                 problemDescriptor = firstDescriptor;
 
-            DrawDetailsFoldout(problemDescriptor);
-            DrawRecommendationFoldout(problemDescriptor);
-            if (m_ActiveAnalysisView.desc.showInvertedCallTree)
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.BeginVertical();
+
+            m_ActiveAnalysisView.OnGUI();
+
+            EditorGUILayout.EndVertical();
+
+            if (m_ActiveAnalysisView.desc.showRightPanels)
             {
-                CallTreeNode callTree = null;
+                EditorGUILayout.BeginVertical(GUILayout.Width(LayoutSize.FoldoutWidth));
+                DrawFoldouts(problemDescriptor);
+                EditorGUILayout.EndVertical();
+            }
+
+            EditorGUILayout.EndHorizontal();
+
+            if (m_ActiveAnalysisView.desc.showDependencyView)
+            {
+                ProjectIssue issue = null;
                 if (selectedIssues.Count() == 1)
                 {
-                    var issue = selectedIssues.First();
-                    if (issue != null)
-                        // get caller sub-tree
-                        callTree = issue.callTree.GetChild();
+                    issue = selectedIssues.First();
                 }
 
-                if (m_CurrentCallTree != callTree)
+                DependencyNode dependencies = null;
+                if (issue != null && issue.dependencies != null)
                 {
-                    m_CallHierarchyView.SetCallTree(callTree);
-                    m_CallHierarchyView.Reload();
-                    m_CurrentCallTree = callTree;
+                    // skip self
+                    //if (issue.dependencies.HasChildren())
+
+                    if (issue.dependencies as CallTreeNode != null)
+                        dependencies =  issue.dependencies.GetChild();
+                    else
+                        dependencies = issue.dependencies;
                 }
 
-                DrawCallHierarchy(callTree);
+                m_ActiveAnalysisView.dependencyView.SetRoot(dependencies);
+
+                DrawDependencyView(issue, dependencies);
             }
+        }
+
+        private void DrawFoldouts(ProblemDescriptor problemDescriptor)
+        {
+            DrawDetailsFoldout(problemDescriptor);
+            DrawRecommendationFoldout(problemDescriptor);
         }
 
         private bool BoldFoldout(bool toggle, GUIContent content)
@@ -444,11 +508,10 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         private void DrawDetailsFoldout(ProblemDescriptor problemDescriptor)
         {
-            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(LayoutSize.FoldoutWidth),
-                GUILayout.MinHeight(LayoutSize.FoldoutMinHeight));
+            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(LayoutSize.FoldoutWidth));
 
-            m_ShowDetails = BoldFoldout(m_ShowDetails, Styles.DetailsFoldout);
-            if (m_ShowDetails)
+            m_Preferences.details = BoldFoldout(m_Preferences.details, Styles.DetailsFoldout);
+            if (m_Preferences.details)
             {
                 if (problemDescriptor != null)
                 {
@@ -466,11 +529,10 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         private void DrawRecommendationFoldout(ProblemDescriptor problemDescriptor)
         {
-            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(LayoutSize.FoldoutWidth),
-                GUILayout.MinHeight(LayoutSize.FoldoutMinHeight));
+            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(LayoutSize.FoldoutWidth));
 
-            m_ShowRecommendation = BoldFoldout(m_ShowRecommendation, Styles.RecommendationFoldout);
-            if (m_ShowRecommendation)
+            m_Preferences.recommendation = BoldFoldout(m_Preferences.recommendation, Styles.RecommendationFoldout);
+            if (m_Preferences.recommendation)
             {
                 if (problemDescriptor != null)
                 {
@@ -486,19 +548,24 @@ namespace Unity.ProjectAuditor.Editor.UI
             EditorGUILayout.EndVertical();
         }
 
-        private void DrawCallHierarchy(CallTreeNode callTree)
+        private void DrawDependencyView(ProjectIssue issue, DependencyNode root)
         {
-            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(LayoutSize.FoldoutWidth),
-                GUILayout.MinHeight(LayoutSize.FoldoutMinHeight * 2));
+            EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.Height(LayoutSize.DependencyViewHeight));
 
-            m_ShowCallTree = BoldFoldout(m_ShowCallTree, Styles.CallTreeFoldout);
-            if (m_ShowCallTree)
+            m_Preferences.dependencies = BoldFoldout(m_Preferences.dependencies, m_ActiveAnalysisView.desc.dependencyViewGuiContent);
+            if (m_Preferences.dependencies)
             {
-                if (callTree != null)
+                if (root != null)
                 {
-                    var r = EditorGUILayout.GetControlRect(GUILayout.Height(400));
+                    var r = EditorGUILayout.GetControlRect(GUILayout.ExpandHeight(true));
 
-                    m_CallHierarchyView.OnGUI(r);
+                    m_ActiveAnalysisView.dependencyView.OnGUI(r);
+                }
+                else if (issue != null)
+                {
+                    GUIStyle s = new GUIStyle(EditorStyles.textField);
+                    s.normal.textColor = Color.yellow;
+                    EditorGUILayout.LabelField(AnalysisIsRequiredText, s, GUILayout.MaxHeight(LayoutSize.FoldoutMaxHeight));
                 }
                 else
                 {
@@ -518,7 +585,7 @@ namespace Unity.ProjectAuditor.Editor.UI
 
         internal string GetSelectedAreasSummary()
         {
-            return GetSelectedSummary(m_AreaSelection, m_AreaNames);
+            return GetSelectedSummary(m_AreaSelection, AreaNames);
         }
 
         private string GetSelectedSummary(TreeViewSelection selection, string[] names)
@@ -614,7 +681,7 @@ namespace Unity.ProjectAuditor.Editor.UI
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(Styles.AreaFilter, GUILayout.Width(LayoutSize.FilterOptionsLeftLabelWidth));
 
-            if (m_AreaNames.Length > 0)
+            if (AreaNames.Length > 0)
             {
                 var lastEnabled = GUI.enabled;
                 // stephenm TODO - We don't currently have any sense of when the Auditor is busy and should disallow user input
@@ -638,7 +705,7 @@ namespace Unity.ProjectAuditor.Editor.UI
                         var screenPosition = GUIUtility.GUIToScreenPoint(windowPosition);
 
                         AreaSelectionWindow.Open(screenPosition.x, screenPosition.y, this, m_AreaSelection,
-                            m_AreaNames);
+                            AreaNames);
                     }
 
                     ProjectAuditorAnalytics.SendUIButtonEvent(ProjectAuditorAnalytics.UIButton.AreaSelect, analytic);
@@ -659,8 +726,8 @@ namespace Unity.ProjectAuditor.Editor.UI
         {
             EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.ExpandWidth(true));
 
-            m_ShowFilters = BoldFoldout(m_ShowFilters, Styles.FiltersFoldout);
-            if (m_ShowFilters)
+            m_Preferences.filters = BoldFoldout(m_Preferences.filters, Styles.FiltersFoldout);
+            if (m_Preferences.filters)
             {
                 EditorGUI.indentLevel++;
 
@@ -669,15 +736,24 @@ namespace Unity.ProjectAuditor.Editor.UI
 
                 EditorGUI.BeginChangeCheck();
 
-                var searchRect =
-                    GUILayoutUtility.GetRect(1, 1, 18, 18, GUILayout.ExpandWidth(true), GUILayout.Width(200));
                 EditorGUILayout.BeginHorizontal();
 
-                if (m_SearchField == null) m_SearchField = new SearchField();
+                EditorGUILayout.LabelField("Search :", GUILayout.Width(80));
 
-                m_SearchText = m_SearchField.OnGUI(searchRect, m_SearchText);
-
+                m_SearchText = EditorGUILayout.DelayedTextField(m_SearchText, GUILayout.Width(180));
                 m_ActiveIssueTable.searchString = m_SearchText;
+
+                m_SearchMatchCase = EditorGUILayout.ToggleLeft("Match Case",
+                    m_SearchMatchCase, GUILayout.Width(160));
+
+                if (m_DeveloperMode)
+                {
+                    // this is only available in developer mode because it is still too slow at the moment
+                    GUI.enabled = m_ActiveAnalysisView.desc.showDependencyView;
+                    m_SearchCallTree = EditorGUILayout.ToggleLeft("Call Tree (slow)",
+                        m_SearchCallTree, GUILayout.Width(160));
+                    GUI.enabled = true;
+                }
 
                 EditorGUILayout.EndHorizontal();
 
@@ -685,12 +761,12 @@ namespace Unity.ProjectAuditor.Editor.UI
                 EditorGUILayout.LabelField("Show :", GUILayout.ExpandWidth(true), GUILayout.Width(80));
                 GUI.enabled = m_ActiveAnalysisView.desc.showCritical;
 
-                bool wasShowingCritical = m_ProjectAuditor.config.DisplayOnlyCriticalIssues;
-                m_ProjectAuditor.config.DisplayOnlyCriticalIssues = EditorGUILayout.ToggleLeft("Only Critical Issues",
-                    m_ProjectAuditor.config.DisplayOnlyCriticalIssues, GUILayout.Width(160));
+                bool wasShowingCritical = m_Preferences.onlyCriticalIssues;
+                m_Preferences.onlyCriticalIssues = EditorGUILayout.ToggleLeft("Only Critical Issues",
+                    m_Preferences.onlyCriticalIssues, GUILayout.Width(160));
                 GUI.enabled = true;
 
-                if (wasShowingCritical != m_ProjectAuditor.config.DisplayOnlyCriticalIssues)
+                if (wasShowingCritical != m_Preferences.onlyCriticalIssues)
                 {
                     var analytic = ProjectAuditorAnalytics.BeginAnalytic();
                     var payload = new Dictionary<string, string>();
@@ -699,15 +775,15 @@ namespace Unity.ProjectAuditor.Editor.UI
                         analytic);
                 }
 
-                bool wasDisplayingMuted = m_ProjectAuditor.config.DisplayMutedIssues;
-                m_ProjectAuditor.config.DisplayMutedIssues = EditorGUILayout.ToggleLeft("Muted Issues",
-                    m_ProjectAuditor.config.DisplayMutedIssues, GUILayout.Width(127));
+                bool wasDisplayingMuted = m_Preferences.mutedIssues;
+                m_Preferences.mutedIssues = EditorGUILayout.ToggleLeft("Muted Issues",
+                    m_Preferences.mutedIssues, GUILayout.Width(127));
 
-                if (wasDisplayingMuted != m_ProjectAuditor.config.DisplayMutedIssues)
+                if (wasDisplayingMuted != m_Preferences.mutedIssues)
                 {
                     var analytic = ProjectAuditorAnalytics.BeginAnalytic();
                     var payload = new Dictionary<string, string>();
-                    payload["selected"] = m_ProjectAuditor.config.DisplayMutedIssues ? "true" : "false";
+                    payload["selected"] = m_Preferences.mutedIssues ? "true" : "false";
                     ProjectAuditorAnalytics.SendUIButtonEventWithKeyValues(ProjectAuditorAnalytics.UIButton.ShowMuted,
                         analytic, payload);
                 }
@@ -725,8 +801,8 @@ namespace Unity.ProjectAuditor.Editor.UI
         {
             EditorGUILayout.BeginVertical(GUI.skin.box, GUILayout.ExpandWidth(true));
 
-            m_ShowActions = BoldFoldout(m_ShowActions, Styles.ActionsFoldout);
-            if (m_ShowActions)
+            m_Preferences.actions = BoldFoldout(m_Preferences.actions, Styles.ActionsFoldout);
+            if (m_Preferences.actions)
             {
                 EditorGUI.indentLevel++;
 
@@ -742,7 +818,7 @@ namespace Unity.ProjectAuditor.Editor.UI
                         SetRuleForItem(item, Rule.Action.None);
                     }
 
-                    if (!m_ProjectAuditor.config.DisplayMutedIssues)
+                    if (!m_Preferences.mutedIssues)
                     {
                         m_ActiveIssueTable.SetSelection(new List<int>());
                     }
@@ -808,9 +884,8 @@ namespace Unity.ProjectAuditor.Editor.UI
                 // - all generated assemblies
 
                 var compiledAssemblies = m_AssemblyNames.Where(a => !AssemblyHelper.IsModuleAssembly(a));
-                if (AssemblyHelper.IsPackageInfoAvailable())
-                    compiledAssemblies = compiledAssemblies.Where(a =>
-                        !AssemblyHelper.GetAssemblyInfoFromAssemblyPath(a).readOnly);
+                compiledAssemblies = compiledAssemblies.Where(a =>
+                    !AssemblyHelper.IsAssemblyReadOnly(a));
                 m_AssemblySelection.selection.AddRange(compiledAssemblies);
 
                 if (!m_AssemblySelection.selection.Any())
@@ -900,7 +975,10 @@ namespace Unity.ProjectAuditor.Editor.UI
 
                 if (m_AnalysisState == AnalysisState.InProgress)
                 {
-                    GUILayout.Label(Styles.AnalysisInProgressLabel, GUILayout.ExpandWidth(true));
+                    GUIStyle s = new GUIStyle(EditorStyles.textField);
+                    s.normal.textColor = Color.yellow;
+
+                    GUILayout.Label(Styles.AnalysisInProgressLabel, s, GUILayout.ExpandWidth(true));
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -923,19 +1001,7 @@ namespace Unity.ProjectAuditor.Editor.UI
 
                 RefreshDisplay();
 
-                if (m_ActiveModeIndex == (int)IssueCategory.Code)
-                {
-                    ProjectAuditorAnalytics.SendUIButtonEvent(ProjectAuditorAnalytics.UIButton.ApiCalls, analytic);
-                }
-                else if (m_ActiveModeIndex == (int)IssueCategory.ProjectSettings)
-                {
-                    ProjectAuditorAnalytics.SendUIButtonEvent(ProjectAuditorAnalytics.UIButton.ProjectSettings,
-                        analytic);
-                }
-                else
-                {
-                    Debug.LogWarning("Unrecognised active mode: couldn't sent analytics event");
-                }
+                ProjectAuditorAnalytics.SendUIButtonEvent(m_ActiveAnalysisView.desc.analyticsEvent, analytic);
             }
         }
 
@@ -969,7 +1035,42 @@ namespace Unity.ProjectAuditor.Editor.UI
                     m_ProjectAuditor.config.AnalyzeOnBuild, GUILayout.Width(100));
                 m_ProjectAuditor.config.FailBuildOnIssues = EditorGUILayout.ToggleLeft("Fail on Issues",
                     m_ProjectAuditor.config.FailBuildOnIssues, GUILayout.Width(100));
+                m_Preferences.emptyGroups = EditorGUILayout.ToggleLeft("Show Empty Groups",
+                    m_Preferences.emptyGroups, GUILayout.Width(100));
                 EditorGUILayout.EndHorizontal();
+            }
+        }
+
+        static void OpenTextFile(Location location)
+        {
+            var obj = AssetDatabase.LoadAssetAtPath<TextAsset>(location.Path);
+            if (obj != null)
+            {
+                // open text file in the text editor
+                AssetDatabase.OpenAsset(obj, location.Line);
+            }
+        }
+
+        static void OpenProjectSettings(Location location)
+        {
+#if UNITY_2018_3_OR_NEWER
+            var window = SettingsService.OpenProjectSettings(location.Path);
+            window.Repaint();
+#endif
+        }
+
+        static void FocusOnAssetInProjectWindow(Location location)
+        {
+            // Note that LoadMainAssetAtPath might fails, for example if there is a compile error in the script associated with the asset.
+            //
+            // Instead, we should use GetMainAssetInstanceID and FrameObjectInProjectWindow internal methods:
+            //    var instanceId = AssetDatabase.GetMainAssetInstanceID(location.Path);
+            //    ProjectWindowUtil.FrameObjectInProjectWindow(instanceId);
+
+            var obj = AssetDatabase.LoadMainAssetAtPath(location.Path);
+            if (obj != null)
+            {
+                ProjectWindowUtil.ShowCreatedAsset(obj);
             }
         }
 
@@ -996,6 +1097,7 @@ namespace Unity.ProjectAuditor.Editor.UI
             public static readonly int FilterOptionsLeftLabelWidth = 100;
             public static readonly int FilterOptionsEnumWidth = 50;
             public static readonly int ModeTabWidth = 300;
+            public static readonly int DependencyViewHeight = 200;
         }
 
         private static class Styles
@@ -1010,7 +1112,6 @@ namespace Unity.ProjectAuditor.Editor.UI
 
             public static readonly GUIContent AnalysisInProgressLabel =
                 new GUIContent("Analysis in progress...", "Analysis in progress...please wait.");
-
 
             public static readonly GUIContent ReloadButton =
                 new GUIContent("Reload DB", "Reload Issue Definition files.");
@@ -1043,7 +1144,11 @@ namespace Unity.ProjectAuditor.Editor.UI
             public static readonly GUIContent CallTreeFoldout =
                 new GUIContent("Inverted Call Hierarchy", "Inverted Call Hierarchy");
 
+#if UNITY_2018_1_OR_NEWER
             public static readonly GUIContent HelpButton = EditorGUIUtility.TrIconContent("_Help", "Open Manual (in a web browser)");
+#else
+            public static readonly GUIContent HelpButton = new GUIContent("?", "Open Manual (in a web browser)");
+#endif
 
             public static readonly string[] ExportModeStrings =
             {
