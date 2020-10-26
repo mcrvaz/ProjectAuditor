@@ -46,7 +46,7 @@ namespace Unity.ProjectAuditor.Editor.Auditors
                 var shader = AssetDatabase.LoadMainAssetAtPath(assetPath) as Shader;
 
                 // TODO: display pass names, shader variants, etc...
-                var issue = new ProjectIssue(s_Descriptor, shader.name, IssueCategory.Assets, new Location(assetPath, LocationType.Asset));
+                var issue = new ProjectIssue(s_Descriptor, shader.name, IssueCategory.Assets, new Location(assetPath));
                 onIssueFound(issue);
             }
 
